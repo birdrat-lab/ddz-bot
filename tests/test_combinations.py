@@ -4,7 +4,6 @@ import pytest
 
 from ddz_bot.cards import Rank
 from ddz_bot.combinations import Play, PlayType, generate_legal_plays
-from ddz_bot.rules import DEFAULT_RULESET
 
 
 def test_parse_rocket() -> None:
@@ -86,12 +85,13 @@ def test_generated_plays_round_trip_through_classifier() -> None:
 
 
 def assert_generated_plays_are_valid(hand: Counter[Rank]) -> set[Play]:
-    plays = generate_legal_plays(hand, rules=DEFAULT_RULESET)
+    positive_part = Counter({rank: count for rank, count in hand.items() if count > 0})
+    plays = generate_legal_plays(hand)
     for play in plays:
         generated = Counter(play.cards)
         for rank, count in generated.items():
-            assert count <= hand[rank]
-        assert Play.from_cards(play.cards, rules=DEFAULT_RULESET) == play
+            assert count <= positive_part[rank]
+        assert Play.from_cards(play.cards) == play
     return plays
 
 
@@ -182,3 +182,31 @@ def test_response_filter_only_keeps_beating_plays() -> None:
     assert Play.from_cards([Rank.SIX, Rank.SIX, Rank.SEVEN, Rank.SEVEN, Rank.EIGHT, Rank.EIGHT]) in responses
     assert Play.from_cards([Rank.BLACK_JOKER, Rank.RED_JOKER]) in responses
     assert Play.from_cards([Rank.FIVE]) not in responses
+
+
+def test_zero_count_filtering_does_not_generate_absent_card() -> None:
+    hand = Counter({Rank.THREE: 0, Rank.FOUR: 1})
+    original = hand.copy()
+    plays = generate_legal_plays(hand)
+
+    assert Play.from_cards([Rank.THREE]) not in plays
+    assert Play.from_cards([Rank.FOUR]) in plays
+    assert hand == original
+
+
+def test_negative_count_rejection() -> None:
+    with pytest.raises(ValueError):
+        generate_legal_plays(Counter({Rank.THREE: -1}))
+
+
+def test_mixed_valid_and_invalid_counts_are_rejected() -> None:
+    with pytest.raises(ValueError):
+        generate_legal_plays(Counter({Rank.THREE: 1, Rank.FOUR: -1}))
+
+
+def test_zero_count_round_trip_invariants() -> None:
+    hand = Counter({Rank.THREE: 0, Rank.FOUR: 2, Rank.FIVE: 1})
+    positive_part = Counter({Rank.FOUR: 2, Rank.FIVE: 1})
+    for play in generate_legal_plays(hand):
+        assert Counter(play.cards) <= positive_part
+        assert Play.from_cards(play.cards) == play

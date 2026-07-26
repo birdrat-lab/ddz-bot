@@ -7,9 +7,6 @@ from enum import Enum
 from itertools import combinations
 
 from .cards import Rank, SEQUENCE_CORE_RANKS
-from .rules import DEFAULT_RULESET, RuleSet
-
-
 class PlayType(str, Enum):
     SINGLE = "single"
     PAIR = "pair"
@@ -80,12 +77,7 @@ class Play:
         return self.comparison_rank > other.comparison_rank
 
     @classmethod
-    def from_cards(
-        cls,
-        cards: Iterable[Rank],
-        rules: RuleSet = DEFAULT_RULESET,
-    ) -> Play:
-        del rules
+    def from_cards(cls, cards: Iterable[Rank]) -> Play:
         spec = _classify_cards(tuple(cards))
         return cls._from_spec(spec)
 
@@ -97,10 +89,8 @@ class Play:
 def generate_legal_plays(
     hand: Counter[Rank],
     current_play: Play | None = None,
-    rules: RuleSet = DEFAULT_RULESET,
 ) -> set[Play]:
-    del rules
-    plays = _generate_all_plays(hand)
+    plays = _generate_all_plays(_normalize_hand(hand))
     if current_play is None:
         return plays
     return {play for play in plays if play.can_beat(current_play)}
@@ -233,6 +223,13 @@ def _generate_all_plays(hand: Counter[Rank]) -> set[Play]:
             plays.add(Play.from_cards(tuple(sorted(quad_cards + attachment_cards))))
 
     return plays
+
+
+def _normalize_hand(hand: Counter[Rank]) -> Counter[Rank]:
+    for rank, count in hand.items():
+        if count < 0:
+            raise ValueError("hand counts must be nonnegative")
+    return Counter({rank: count for rank, count in hand.items() if count > 0})
 
 
 def _parse_airplane(cards: tuple[Rank, ...], counts: Counter[Rank]) -> _PlaySpec | None:

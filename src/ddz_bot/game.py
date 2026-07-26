@@ -207,7 +207,7 @@ class DouDizhuGame:
         acting_player = state.current_player if player is None else player
         if acting_player != state.current_player:
             raise ValueError("legal plays can only be requested for the current player")
-        return generate_legal_plays(state.hands[acting_player], state.current_play, self.config.rules)
+        return generate_legal_plays(state.hands[acting_player], state.current_play)
 
     def can_pass(self, state: GameState) -> bool:
         return state.phase == GamePhase.PLAYING and state.current_play is not None
@@ -260,6 +260,7 @@ class DouDizhuGame:
         if not hand:
             state.phase = GamePhase.FINISHED
             state.winner = player
+            state.current_player = None
             return state
 
         state.current_player = (player + 1) % self.config.num_players
@@ -371,6 +372,8 @@ class DouDizhuGame:
         raise ValueError("unknown action key")
 
     def _validate_config(self) -> None:
+        if self.config.rules.max_bid < 1:
+            raise ValueError("max_bid must be at least 1")
         landlord_count = self.config.rules.landlord_card_count
         if landlord_count < 0:
             raise ValueError("landlord card count must be non-negative")
