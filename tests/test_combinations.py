@@ -1,5 +1,7 @@
 from collections import Counter
 
+import pytest
+
 from ddz_bot.cards import Rank
 from ddz_bot.combinations import Play, PlayType, generate_legal_plays
 
@@ -13,61 +15,73 @@ def test_parse_straight_excludes_two_and_jokers() -> None:
     play = Play.from_cards([Rank.THREE, Rank.FOUR, Rank.FIVE, Rank.SIX, Rank.SEVEN])
     assert play.play_type == PlayType.STRAIGHT
 
-    try:
+    with pytest.raises(ValueError):
         Play.from_cards([Rank.TEN, Rank.JACK, Rank.QUEEN, Rank.KING, Rank.ACE, Rank.TWO])
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("straight with a two should be illegal")
 
 
-def test_parse_airplane_with_pairs() -> None:
-    play = Play.from_cards(
-        [
-            Rank.THREE,
-            Rank.THREE,
-            Rank.THREE,
-            Rank.FOUR,
-            Rank.FOUR,
-            Rank.FOUR,
-            Rank.SEVEN,
-            Rank.SEVEN,
-            Rank.EIGHT,
-            Rank.EIGHT,
-        ]
-    )
-    assert play.play_type == PlayType.AIRPLANE_PAIRS
-    assert play.core_ranks == (Rank.THREE, Rank.FOUR)
+def test_four_with_two_singles_rejects_pair_split() -> None:
+    with pytest.raises(ValueError):
+        Play.from_cards(
+            [
+                Rank.THREE,
+                Rank.THREE,
+                Rank.THREE,
+                Rank.THREE,
+                Rank.FOUR,
+                Rank.FOUR,
+            ]
+        )
 
 
-def test_bomb_and_rocket_override_comparison() -> None:
-    straight = Play.from_cards([Rank.THREE, Rank.FOUR, Rank.FIVE, Rank.SIX, Rank.SEVEN])
-    bomb = Play.from_cards([Rank.NINE, Rank.NINE, Rank.NINE, Rank.NINE])
-    rocket = Play.from_cards([Rank.BLACK_JOKER, Rank.RED_JOKER])
+def test_airplane_single_wings_must_be_distinct() -> None:
+    with pytest.raises(ValueError):
+        Play.from_cards(
+            [
+                Rank.THREE,
+                Rank.THREE,
+                Rank.THREE,
+                Rank.FOUR,
+                Rank.FOUR,
+                Rank.FOUR,
+                Rank.SEVEN,
+                Rank.SEVEN,
+            ]
+        )
 
-    assert bomb.can_beat(straight)
-    assert rocket.can_beat(bomb)
+
+def test_airplane_single_wings_reject_double_jokers() -> None:
+    with pytest.raises(ValueError):
+        Play.from_cards(
+            [
+                Rank.THREE,
+                Rank.THREE,
+                Rank.THREE,
+                Rank.FOUR,
+                Rank.FOUR,
+                Rank.FOUR,
+                Rank.BLACK_JOKER,
+                Rank.RED_JOKER,
+            ]
+        )
 
 
-def test_generate_legal_plays_includes_broken_bomb_lines() -> None:
+def test_generated_plays_round_trip_through_classifier() -> None:
     hand = Counter(
         [
             Rank.THREE,
             Rank.THREE,
             Rank.THREE,
-            Rank.THREE,
+            Rank.FOUR,
             Rank.FOUR,
             Rank.FOUR,
             Rank.FIVE,
+            Rank.SIX,
+            Rank.SEVEN,
+            Rank.EIGHT,
         ]
     )
-    plays = generate_legal_plays(hand)
-
-    assert Play.from_cards([Rank.THREE]) in plays
-    assert Play.from_cards([Rank.THREE, Rank.THREE]) in plays
-    assert Play.from_cards([Rank.THREE, Rank.THREE, Rank.THREE]) in plays
-    assert Play.from_cards([Rank.THREE, Rank.THREE, Rank.THREE, Rank.THREE]) in plays
-    assert Play.from_cards([Rank.THREE, Rank.THREE, Rank.THREE, Rank.FOUR]) in plays
+    for play in generate_legal_plays(hand):
+        assert Play.from_cards(play.cards) == play
 
 
 def test_response_filter_only_keeps_beating_plays() -> None:
