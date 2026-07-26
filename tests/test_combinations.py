@@ -4,6 +4,7 @@ import pytest
 
 from ddz_bot.cards import Rank
 from ddz_bot.combinations import Play, PlayType, generate_legal_plays
+from ddz_bot.rules import DEFAULT_RULESET
 
 
 def test_parse_rocket() -> None:
@@ -82,6 +83,80 @@ def test_generated_plays_round_trip_through_classifier() -> None:
     )
     for play in generate_legal_plays(hand):
         assert Play.from_cards(play.cards) == play
+
+
+def assert_generated_plays_are_valid(hand: Counter[Rank]) -> set[Play]:
+    plays = generate_legal_plays(hand, rules=DEFAULT_RULESET)
+    for play in plays:
+        generated = Counter(play.cards)
+        for rank, count in generated.items():
+            assert count <= hand[rank]
+        assert Play.from_cards(play.cards, rules=DEFAULT_RULESET) == play
+    return plays
+
+
+def test_quad_heavy_generation_invariants_two_adjacent_quads() -> None:
+    hand = Counter(
+        [
+            Rank.THREE, Rank.THREE, Rank.THREE, Rank.THREE,
+            Rank.FOUR, Rank.FOUR, Rank.FOUR, Rank.FOUR,
+        ]
+    )
+    plays = assert_generated_plays_are_valid(hand)
+    assert Play.from_cards([Rank.THREE, Rank.THREE, Rank.THREE, Rank.FOUR, Rank.FOUR, Rank.FOUR]) in plays
+    assert all(not (play.play_type == PlayType.AIRPLANE_SINGLES and len(play.cards) == 8) for play in plays)
+
+
+def test_quad_heavy_generation_invariants_three_adjacent_quads() -> None:
+    hand = Counter(
+        [
+            Rank.THREE, Rank.THREE, Rank.THREE, Rank.THREE,
+            Rank.FOUR, Rank.FOUR, Rank.FOUR, Rank.FOUR,
+            Rank.FIVE, Rank.FIVE, Rank.FIVE, Rank.FIVE,
+        ]
+    )
+    assert_generated_plays_are_valid(hand)
+
+
+def test_airplane_generation_with_external_quads_and_valid_wings() -> None:
+    hand = Counter(
+        [
+            Rank.THREE, Rank.THREE, Rank.THREE,
+            Rank.FOUR, Rank.FOUR, Rank.FOUR,
+            Rank.SEVEN, Rank.SEVEN, Rank.SEVEN, Rank.SEVEN,
+            Rank.EIGHT,
+            Rank.NINE,
+            Rank.TEN, Rank.TEN,
+            Rank.JACK, Rank.JACK,
+        ]
+    )
+    plays = assert_generated_plays_are_valid(hand)
+    assert Play.from_cards([Rank.THREE, Rank.THREE, Rank.THREE, Rank.FOUR, Rank.FOUR, Rank.FOUR, Rank.EIGHT, Rank.NINE]) in plays
+    assert Play.from_cards([Rank.THREE, Rank.THREE, Rank.THREE, Rank.FOUR, Rank.FOUR, Rank.FOUR, Rank.TEN, Rank.TEN, Rank.JACK, Rank.JACK]) in plays
+
+
+def test_airplane_generation_rejects_longer_single_wings_with_both_jokers() -> None:
+    with pytest.raises(ValueError):
+        Play.from_cards(
+            [
+                Rank.THREE, Rank.THREE, Rank.THREE,
+                Rank.FOUR, Rank.FOUR, Rank.FOUR,
+                Rank.FIVE, Rank.FIVE, Rank.FIVE,
+                Rank.BLACK_JOKER, Rank.RED_JOKER, Rank.SIX,
+            ]
+        )
+
+
+def test_airplane_generation_accepts_longer_single_wings_with_one_joker() -> None:
+    play = Play.from_cards(
+        [
+            Rank.THREE, Rank.THREE, Rank.THREE,
+            Rank.FOUR, Rank.FOUR, Rank.FOUR,
+            Rank.FIVE, Rank.FIVE, Rank.FIVE,
+            Rank.BLACK_JOKER, Rank.SIX, Rank.SEVEN,
+        ]
+    )
+    assert play.play_type == PlayType.AIRPLANE_SINGLES
 
 
 def test_response_filter_only_keeps_beating_plays() -> None:

@@ -43,7 +43,7 @@ class Play:
     attachment_ranks: tuple[Rank, ...] = ()
 
     def __post_init__(self) -> None:
-        spec = _classify_cards(self.cards, DEFAULT_RULESET)
+        spec = _classify_cards(self.cards)
         if (
             spec.play_type != self.play_type
             or spec.cards != self.cards
@@ -85,7 +85,8 @@ class Play:
         cards: Iterable[Rank],
         rules: RuleSet = DEFAULT_RULESET,
     ) -> Play:
-        spec = _classify_cards(tuple(cards), rules)
+        del rules
+        spec = _classify_cards(tuple(cards))
         return cls._from_spec(spec)
 
     @classmethod
@@ -98,13 +99,14 @@ def generate_legal_plays(
     current_play: Play | None = None,
     rules: RuleSet = DEFAULT_RULESET,
 ) -> set[Play]:
-    plays = _generate_all_plays(hand, rules)
+    del rules
+    plays = _generate_all_plays(hand)
     if current_play is None:
         return plays
     return {play for play in plays if play.can_beat(current_play)}
 
 
-def _classify_cards(cards: Iterable[Rank], rules: RuleSet) -> _PlaySpec:
+def _classify_cards(cards: Iterable[Rank]) -> _PlaySpec:
     normalized_cards = tuple(sorted(cards))
     if not normalized_cards:
         raise ValueError("play must contain at least one card")
@@ -137,8 +139,6 @@ def _classify_cards(cards: Iterable[Rank], rules: RuleSet) -> _PlaySpec:
     if size == 5 and frequencies == [3, 2]:
         trip_rank = _ranks_with_count(counts, 3)[0]
         pair_rank = _ranks_with_count(counts, 2)[0]
-        if pair_rank == trip_rank:
-            raise ValueError(f"illegal play: {normalized_cards}")
         return _PlaySpec(PlayType.TRIPLET_PAIR, normalized_cards, (trip_rank,), (pair_rank, pair_rank))
 
     if _is_straight(counts):
@@ -147,7 +147,7 @@ def _classify_cards(cards: Iterable[Rank], rules: RuleSet) -> _PlaySpec:
     if _is_consecutive_pairs(counts):
         return _PlaySpec(PlayType.CONSECUTIVE_PAIRS, normalized_cards, unique_ranks)
 
-    airplane = _parse_airplane(normalized_cards, counts, rules)
+    airplane = _parse_airplane(normalized_cards, counts)
     if airplane is not None:
         return airplane
 
@@ -156,10 +156,7 @@ def _classify_cards(cards: Iterable[Rank], rules: RuleSet) -> _PlaySpec:
         attachment_counts = Counter(rank for rank in normalized_cards if rank != quad_rank)
         if len(attachment_counts) != 2 or any(count != 1 for count in attachment_counts.values()):
             raise ValueError(f"illegal play: {normalized_cards}")
-        if rules.forbid_double_joker_single_attachments and set(attachment_counts) == {
-            Rank.BLACK_JOKER,
-            Rank.RED_JOKER,
-        }:
+        if _contains_both_jokers(tuple(attachment_counts)):
             raise ValueError(f"illegal play: {normalized_cards}")
         attachments = tuple(sorted(attachment_counts))
         return _PlaySpec(PlayType.FOUR_WITH_TWO_SINGLES, normalized_cards, (quad_rank,), attachments)
@@ -175,89 +172,70 @@ def _classify_cards(cards: Iterable[Rank], rules: RuleSet) -> _PlaySpec:
     raise ValueError(f"illegal play: {normalized_cards}")
 
 
-def _generate_all_plays(hand: Counter[Rank], rules: RuleSet) -> set[Play]:
+def _generate_all_plays(hand: Counter[Rank]) -> set[Play]:
     plays: set[Play] = set()
     ranks = sorted(hand)
     sequence_ranks = [rank for rank in ranks if rank in SEQUENCE_CORE_RANKS]
 
     for rank in ranks:
-        plays.add(Play.from_cards((rank,), rules))
+        plays.add(Play.from_cards((rank,)))
         if hand[rank] >= 2:
-            plays.add(Play.from_cards((rank, rank), rules))
+            plays.add(Play.from_cards((rank, rank)))
         if hand[rank] >= 3:
-            plays.add(Play.from_cards((rank, rank, rank), rules))
+            plays.add(Play.from_cards((rank, rank, rank)))
         if hand[rank] >= 4:
-            plays.add(Play.from_cards((rank, rank, rank, rank), rules))
+            plays.add(Play.from_cards((rank, rank, rank, rank)))
 
     if hand[Rank.BLACK_JOKER] >= 1 and hand[Rank.RED_JOKER] >= 1:
-        plays.add(Play.from_cards((Rank.BLACK_JOKER, Rank.RED_JOKER), rules))
+        plays.add(Play.from_cards((Rank.BLACK_JOKER, Rank.RED_JOKER)))
 
     for trip_rank in [rank for rank in ranks if hand[rank] >= 3]:
         for kicker in [rank for rank in ranks if rank != trip_rank]:
-            plays.add(Play.from_cards((trip_rank, trip_rank, trip_rank, kicker), rules))
+            plays.add(Play.from_cards((trip_rank, trip_rank, trip_rank, kicker)))
         for pair_rank in [rank for rank in ranks if rank != trip_rank and hand[rank] >= 2]:
-            plays.add(Play.from_cards((trip_rank, trip_rank, trip_rank, pair_rank, pair_rank), rules))
+            plays.add(Play.from_cards((trip_rank, trip_rank, trip_rank, pair_rank, pair_rank)))
 
     for sequence in _all_consecutive_sequences(sequence_ranks, lambda rank: hand[rank] >= 1, minimum_length=5):
         for core in _all_slices(sequence, minimum_length=5):
-            plays.add(Play.from_cards(core, rules))
+            plays.add(Play.from_cards(core))
 
     for sequence in _all_consecutive_sequences(sequence_ranks, lambda rank: hand[rank] >= 2, minimum_length=3):
         for core in _all_slices(sequence, minimum_length=3):
-            cards = tuple(sorted(rank for rank in core for _ in range(2)))
-            plays.add(Play.from_cards(cards, rules))
+            plays.add(Play.from_cards(tuple(sorted(rank for rank in core for _ in range(2)))))
 
     for sequence in _all_consecutive_sequences(sequence_ranks, lambda rank: hand[rank] >= 3, minimum_length=2):
         for core in _all_slices(sequence, minimum_length=2):
-            residual = hand.copy()
-            for rank in core:
-                residual[rank] -= 3
-                if residual[rank] == 0:
-                    del residual[rank]
             base_cards = tuple(sorted(rank for rank in core for _ in range(3)))
-            plays.add(Play.from_cards(base_cards, rules))
+            plays.add(Play.from_cards(base_cards))
 
-            for wing_ranks in combinations(sorted(residual), len(core)):
-                if any(residual[rank] < 1 for rank in wing_ranks):
+            eligible_single_wings = [rank for rank in ranks if rank not in core and hand[rank] >= 1]
+            for wing_ranks in combinations(eligible_single_wings, len(core)):
+                if _contains_both_jokers(wing_ranks):
                     continue
-                if rules.forbid_double_joker_single_attachments and set(wing_ranks) == {
-                    Rank.BLACK_JOKER,
-                    Rank.RED_JOKER,
-                }:
-                    continue
-                cards = tuple(sorted(base_cards + tuple(wing_ranks)))
-                plays.add(Play.from_cards(cards, rules))
+                plays.add(Play.from_cards(tuple(sorted(base_cards + tuple(wing_ranks)))))
 
-            for pair_ranks in combinations(sorted(rank for rank in residual if residual[rank] >= 2), len(core)):
+            eligible_pair_wings = [rank for rank in ranks if rank not in core and hand[rank] >= 2]
+            for pair_ranks in combinations(eligible_pair_wings, len(core)):
                 attachment_cards = tuple(sorted(rank for rank in pair_ranks for _ in range(2)))
-                cards = tuple(sorted(base_cards + attachment_cards))
-                plays.add(Play.from_cards(cards, rules))
+                plays.add(Play.from_cards(tuple(sorted(base_cards + attachment_cards))))
 
     for quad_rank in [rank for rank in ranks if hand[rank] >= 4]:
-        residual = hand.copy()
-        residual[quad_rank] -= 4
-        if residual[quad_rank] == 0:
-            del residual[quad_rank]
         quad_cards = (quad_rank, quad_rank, quad_rank, quad_rank)
-
-        for attachment_ranks in combinations(sorted(residual), 2):
-            if any(residual[rank] < 1 for rank in attachment_ranks):
+        eligible_single_wings = [rank for rank in ranks if rank != quad_rank and hand[rank] >= 1]
+        for wing_ranks in combinations(eligible_single_wings, 2):
+            if _contains_both_jokers(wing_ranks):
                 continue
-            if rules.forbid_double_joker_single_attachments and set(attachment_ranks) == {
-                Rank.BLACK_JOKER,
-                Rank.RED_JOKER,
-            }:
-                continue
-            plays.add(Play.from_cards(tuple(sorted(quad_cards + attachment_ranks)), rules))
+            plays.add(Play.from_cards(tuple(sorted(quad_cards + wing_ranks))))
 
-        for pair_ranks in combinations(sorted(rank for rank in residual if residual[rank] >= 2), 2):
+        eligible_pair_wings = [rank for rank in ranks if rank != quad_rank and hand[rank] >= 2]
+        for pair_ranks in combinations(eligible_pair_wings, 2):
             attachment_cards = tuple(sorted(rank for rank in pair_ranks for _ in range(2)))
-            plays.add(Play.from_cards(tuple(sorted(quad_cards + attachment_cards)), rules))
+            plays.add(Play.from_cards(tuple(sorted(quad_cards + attachment_cards))))
 
     return plays
 
 
-def _parse_airplane(cards: tuple[Rank, ...], counts: Counter[Rank], rules: RuleSet) -> _PlaySpec | None:
+def _parse_airplane(cards: tuple[Rank, ...], counts: Counter[Rank]) -> _PlaySpec | None:
     trip_ranks = tuple(sorted(rank for rank, count in counts.items() if count == 3))
     if len(trip_ranks) < 2 or not _ranks_are_consecutive(trip_ranks):
         return None
@@ -271,10 +249,7 @@ def _parse_airplane(cards: tuple[Rank, ...], counts: Counter[Rank], rules: RuleS
     if len(cards) == trip_count * 4:
         if len(attachment_counts) != trip_count or any(count != 1 for count in attachment_counts.values()):
             raise ValueError(f"illegal play: {cards}")
-        if rules.forbid_double_joker_single_attachments and set(attachment_counts) == {
-            Rank.BLACK_JOKER,
-            Rank.RED_JOKER,
-        }:
+        if _contains_both_jokers(tuple(attachment_counts)):
             raise ValueError(f"illegal play: {cards}")
         attachments = tuple(sorted(attachment_counts))
         return _PlaySpec(PlayType.AIRPLANE_SINGLES, cards, trip_ranks, attachments)
@@ -340,3 +315,7 @@ def _all_slices(sequence: list[Rank], minimum_length: int) -> list[tuple[Rank, .
         for start in range(0, len(sequence) - length + 1):
             slices.append(tuple(sequence[start : start + length]))
     return slices
+
+
+def _contains_both_jokers(ranks: tuple[Rank, ...]) -> bool:
+    return {Rank.BLACK_JOKER, Rank.RED_JOKER}.issubset(set(ranks))
